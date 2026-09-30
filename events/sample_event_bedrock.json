@@ -1,0 +1,26 @@
+{
+  "messageVersion": "1.0",
+  "agent": {
+    "name": "weather-orchestrator-agent",
+    "id": "AGENTIDPLACEHOLDER",
+    "alias": "TSTALIASID",
+    "version": "DRAFT"
+  },
+  "actionGroup": "CurrentWeatherActionGroup",
+  "apiPath": "/current-weather",
+  "httpMethod": "GET",
+  "parameters": [
+    {
+      "name": "latitude",
+      "type": "number",
+      "value": "40.7128"
+    },
+    {
+      "name": "longitude",
+      "type": "number",
+      "value": "-74.0060"
+    }
+  ],
+  "sessionAttributes": {},
+  "promptSessionAttributes": {}
+}

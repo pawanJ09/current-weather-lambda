@@ -1,0 +1,11 @@
+[tool.ruff]
+# Bump to "py314" once your installed ruff version's target-version enum
+# includes it (ruff adds new target versions after each CPython release).
+target-version = "py314"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

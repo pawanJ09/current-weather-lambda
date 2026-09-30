@@ -1,0 +1,88 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  id-token: write   # required for OIDC -> AWS role assumption
+  contents: read
+
+env:
+  FUNCTION_NAME: current-weather-lambda
+  AWS_REGION: us-east-1
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    name: Build & deploy
+    needs: ci
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build deployment package
+        run: |
+          mkdir -p build
+          cp src/handler.py build/
+          cd build && zip -r ../function.zip .
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy code to Lambda
+        run: |
+          aws lambda update-function-code \
+            --function-name "$FUNCTION_NAME" \
+            --zip-file fileb://function.zip \
+            --publish
+
+      - name: Wait for the update to finish
+        run: |
+          aws lambda wait function-updated \
+            --function-name "$FUNCTION_NAME"
+
+  validate:
+    name: Smoke-test the deployed function
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Invoke deployed Lambda with sample request
+        run: |
+          aws lambda invoke \
+            --function-name "$FUNCTION_NAME" \
+            --cli-binary-format raw-in-base64-out \
+            --payload file://events/sample_event_direct.json \
+            response.json
+          echo "--- raw response ---"
+          cat response.json
+
+      - name: Assert the response was successful
+        run: |
+          STATUS=$(jq -r '.statusCode' response.json)
+          if [ "$STATUS" != "200" ]; then
+            echo "::error::Deployed Lambda did not return 200 (got: $STATUS)"
+            exit 1
+          fi
+          BODY_HAS_TEMP=$(jq -r '.body' response.json | jq -r 'has("temperature_f")')
+          if [ "$BODY_HAS_TEMP" != "true" ]; then
+            echo "::error::Response body is missing temperature_f"
+            exit 1
+          fi
+          echo "✅ Deployed Lambda responded successfully with live weather data"

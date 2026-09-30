@@ -1,0 +1,3 @@
+# No runtime dependencies. handler.py uses only the Python standard
+# library (urllib), so the deployment package is just this repo's src/
+# zipped up -- no dependency layer or vendored packages needed.

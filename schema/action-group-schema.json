@@ -1,0 +1,66 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Current Weather API",
+    "version": "1.0.0",
+    "description": "Returns current weather conditions (temperature, humidity, precipitation, wind) for a given latitude/longitude, sourced from Open-Meteo."
+  },
+  "paths": {
+    "/current-weather": {
+      "get": {
+        "summary": "Get current weather conditions for a location",
+        "description": "Fetches live current-conditions data for the given coordinates.",
+        "operationId": "getCurrentWeather",
+        "parameters": [
+          {
+            "name": "latitude",
+            "in": "query",
+            "description": "Latitude of the location, e.g. 40.7128",
+            "required": true,
+            "schema": { "type": "number" }
+          },
+          {
+            "name": "longitude",
+            "in": "query",
+            "description": "Longitude of the location, e.g. -74.0060",
+            "required": true,
+            "schema": { "type": "number" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current weather conditions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "latitude": { "type": "number" },
+                    "longitude": { "type": "number" },
+                    "timezone": { "type": "string" },
+                    "observation_time": {
+                      "type": "string",
+                      "description": "ISO 8601 local timestamp of the observation"
+                    },
+                    "temperature_f": { "type": "number" },
+                    "feels_like_f": { "type": "number" },
+                    "humidity_pct": { "type": "number" },
+                    "precipitation_in": { "type": "number" },
+                    "wind_speed_mph": { "type": "number" },
+                    "wind_direction_deg": { "type": "number" },
+                    "weather_code": {
+                      "type": "integer",
+                      "description": "WMO weather interpretation code"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "description": "Missing or invalid latitude/longitude" },
+          "502": { "description": "Open-Meteo could not be reached or returned bad data" }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "_comment": "This is not a policy document to attach to the role. It's the shape of the resource-based (Lambda-side) permission that Bedrock needs. In Style 1, attaching this Lambda to an Orchestrator Agent's Action Group via the console/CLI typically adds this automatically. If you ever need to add it manually, use the `aws lambda add-permission` command below with your own values filled in.",
+  "cli_example": "aws lambda add-permission --function-name current-weather-lambda --statement-id AllowBedrockAgentInvoke --action lambda:InvokeFunction --principal bedrock.amazonaws.com --source-arn arn:aws:bedrock:<REGION>:<ACCOUNT_ID>:agent/<AGENT_ID>",
+  "resulting_statement_shape": {
+    "Sid": "AllowBedrockAgentInvoke",
+    "Effect": "Allow",
+    "Principal": { "Service": "bedrock.amazonaws.com" },
+    "Action": "lambda:InvokeFunction",
+    "Resource": "arn:aws:lambda:<REGION>:<ACCOUNT_ID>:function:current-weather-lambda",
+    "Condition": {
+      "ArnLike": {
+        "AWS:SourceArn": "arn:aws:bedrock:<REGION>:<ACCOUNT_ID>:agent/<AGENT_ID>"
+      }
+    }
+  }
+}
