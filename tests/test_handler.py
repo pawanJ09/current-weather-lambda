@@ -94,15 +94,16 @@ class TestLambdaHandlerDirectInvocation:
 
 class TestLambdaHandlerBedrockInvocation:
     def _event(self, params=None):
+        if params is None:
+            params = [
+                {"name": "latitude", "type": "number", "value": "40.71"},
+                {"name": "longitude", "type": "number", "value": "-74.01"},
+            ]
         return {
             "actionGroup": "CurrentWeatherActionGroup",
             "apiPath": "/current-weather",
             "httpMethod": "GET",
             "parameters": params
-            or [
-                {"name": "latitude", "type": "number", "value": "40.71"},
-                {"name": "longitude", "type": "number", "value": "-74.01"},
-            ],
         }
 
     @patch("src.handler.fetch_current_weather")
