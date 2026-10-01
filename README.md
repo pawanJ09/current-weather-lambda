@@ -53,34 +53,25 @@ print(lambda_handler(json.load(open('events/sample_event_direct.json')), None))
 This makes a real call to Open-Meteo (no API key required) and prints the
 parsed weather for New York City.
 
-## First-time AWS setup (one-time, manual)
+## AWS setup: fully automatic, first run included
 
-The GitHub Actions deploy workflow **updates code on an existing function**
-— it doesn't create the function or its role the first time. Do that once:
+The deploy workflow bootstraps everything itself — there's no manual
+`aws iam create-role` / `aws lambda create-function` step to run by hand.
+On the **first** push to `main`, the `deploy` job:
 
-```bash
-# 1. Create the execution role
-aws iam create-role \
-  --role-name current-weather-lambda-role \
-  --assume-role-policy-document file://iam/trust-policy.json
+1. Checks whether `current-weather-lambda-role` exists (`aws iam get-role`).
+   If not, creates it from `iam/trust-policy.json` and attaches
+   `iam/execution-role-policy.json`, then pauses ~10s for IAM propagation.
+2. Checks whether the `current-weather-lambda` function exists
+   (`aws lambda get-function`). If not, calls `create-function` with that
+   role's ARN — retrying a few times with backoff, since a brand-new IAM
+   role can take a little longer than 10s to become assumable by Lambda.
 
-aws iam put-role-policy \
-  --role-name current-weather-lambda-role \
-  --policy-name current-weather-lambda-logs \
-  --policy-document file://iam/execution-role-policy.json
-
-# 2. Package and create the function
-mkdir -p build && cp src/handler.py build/ && (cd build && zip -r ../function.zip .)
-
-aws lambda create-function \
-  --function-name current-weather-lambda \
-  --runtime python3.14 \
-  --handler handler.lambda_handler \
-  --role arn:aws:iam::<ACCOUNT_ID>:role/current-weather-lambda-role \
-  --zip-file fileb://function.zip \
-  --timeout 10 \
-  --memory-size 128
-```
+On every **subsequent** push, both of those checks find existing resources
+and the job just calls `update-function-code` instead. Same workflow, same
+one command (`git push`), correct behavior either way — nothing to run
+manually except the one-time OIDC setup below (which can't bootstrap
+itself, since it's what grants the workflow AWS access in the first place).
 
 Once `weather-orchestrator-agent` exists and you attach this function as an
 Action Group backend, the console/CLI step that attaches it typically adds
@@ -99,8 +90,9 @@ Two workflows:
 - **`deploy.yml`** — runs on push to `main` (or manually via
   `workflow_dispatch`). Three jobs in sequence:
   1. `ci` — reruns lint + tests as a gate
-  2. `deploy` — zips `src/handler.py` and calls `aws lambda
-     update-function-code`, then waits for the update to finish
+  2. `deploy` — zips `src/handler.py`, creates the execution role and the
+     function if they don't exist yet (first run), or updates the
+     function's code if they do (every run after) — see previous section
   3. `validate` — invokes the **live deployed function** with
      `events/sample_event_direct.json` and fails the workflow if the
      response isn't a 200 with a `temperature_f` field
@@ -109,13 +101,30 @@ Two workflows:
 
 | Secret | Value |
 |---|---|
-| `AWS_DEPLOY_ROLE_ARN` | ARN of an IAM role GitHub can assume via OIDC, scoped to `lambda:UpdateFunctionCode`, `lambda:GetFunction`, `lambda:InvokeFunction`, and `lambda:UpdateFunctionCode` on this function's ARN |
+| `AWS_DEPLOY_ROLE_ARN` | ARN of an IAM role GitHub can assume via OIDC |
 
-Uses OIDC (`aws-actions/configure-aws-credentials`) rather than long-lived
-access keys. You'll need a one-time IAM OIDC identity provider for
-`token.actions.githubusercontent.com` in your account (skip if you already
-set this up for another repo) and a role trusting your repo:
+This is the one thing that genuinely can't be automated by the workflow
+itself — something has to grant GitHub Actions AWS access in the first
+place. Uses OIDC (`aws-actions/configure-aws-credentials`) rather than
+long-lived access keys. One-time setup:
 
+**1. OIDC identity provider** (skip if another repo in this account already
+set one up for `token.actions.githubusercontent.com`):
+
+```bash
+aws iam create-open-id-connect-provider \
+  --url https://token.actions.githubusercontent.com \
+  --client-id-list sts.amazonaws.com \
+  --thumbprint-list 6938fd4d98bab03faadb97b34396831e3780aea1
+```
+
+**2. A deploy role trusting your repo**, with a permissions policy covering
+everything the workflow now does — role bootstrapping *and* Lambda
+create/update/invoke. Note `iam:PassRole`: it's easy to miss and
+`create-function` fails with an opaque access-denied without it, since
+AWS requires explicit permission to hand a role to another service.
+
+Trust policy:
 ```json
 {
   "Effect": "Allow",
@@ -124,6 +133,39 @@ set this up for another repo) and a role trusting your repo:
   "Condition": {
     "StringEquals": { "token.actions.githubusercontent.com:sub": "repo:<YOUR_GH_ORG>/current-weather-lambda:ref:refs/heads/main" }
   }
+}
+```
+
+Permissions policy:
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "RoleBootstrap",
+      "Effect": "Allow",
+      "Action": ["iam:GetRole", "iam:CreateRole", "iam:PutRolePolicy"],
+      "Resource": "arn:aws:iam::<ACCOUNT_ID>:role/current-weather-lambda-role"
+    },
+    {
+      "Sid": "PassRoleToLambda",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "arn:aws:iam::<ACCOUNT_ID>:role/current-weather-lambda-role",
+      "Condition": { "StringEquals": { "iam:PassedToService": "lambda.amazonaws.com" } }
+    },
+    {
+      "Sid": "LambdaDeployAndInvoke",
+      "Effect": "Allow",
+      "Action": [
+        "lambda:GetFunction",
+        "lambda:CreateFunction",
+        "lambda:UpdateFunctionCode",
+        "lambda:InvokeFunction"
+      ],
+      "Resource": "arn:aws:lambda:<REGION>:<ACCOUNT_ID>:function:current-weather-lambda"
+    }
+  ]
 }
 ```
 

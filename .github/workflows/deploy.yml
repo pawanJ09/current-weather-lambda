@@ -11,6 +11,7 @@ permissions:
 
 env:
   FUNCTION_NAME: current-weather-lambda
+  ROLE_NAME: current-weather-lambda-role
   AWS_REGION: us-east-1
 
 jobs:
@@ -37,17 +38,62 @@ jobs:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Deploy code to Lambda
+      - name: Ensure execution role exists (create on first run only)
         run: |
-          aws lambda update-function-code \
-            --function-name "$FUNCTION_NAME" \
-            --zip-file fileb://function.zip \
-            --publish
+          if aws iam get-role --role-name "$ROLE_NAME" >/dev/null 2>&1; then
+            echo "Role $ROLE_NAME already exists — skipping creation."
+          else
+            echo "Role $ROLE_NAME not found — creating it."
+            aws iam create-role \
+              --role-name "$ROLE_NAME" \
+              --assume-role-policy-document file://iam/trust-policy.json
 
-      - name: Wait for the update to finish
+            aws iam put-role-policy \
+              --role-name "$ROLE_NAME" \
+              --policy-name "${ROLE_NAME}-logs" \
+              --policy-document file://iam/execution-role-policy.json
+
+            echo "New role created — waiting for IAM propagation..."
+            sleep 10
+          fi
+
+      - name: Resolve execution role ARN
+        id: role
         run: |
-          aws lambda wait function-updated \
-            --function-name "$FUNCTION_NAME"
+          ROLE_ARN=$(aws iam get-role --role-name "$ROLE_NAME" --query 'Role.Arn' --output text)
+          echo "arn=$ROLE_ARN" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy code to Lambda (create on first run, update after)
+        run: |
+          if aws lambda get-function --function-name "$FUNCTION_NAME" >/dev/null 2>&1; then
+            echo "Function $FUNCTION_NAME already exists — updating code."
+            aws lambda update-function-code \
+              --function-name "$FUNCTION_NAME" \
+              --zip-file fileb://function.zip \
+              --publish
+            aws lambda wait function-updated --function-name "$FUNCTION_NAME"
+          else
+            echo "Function $FUNCTION_NAME not found — creating it."
+            # A freshly created IAM role can take a few seconds to become
+            # assumable by Lambda even after the propagation sleep above,
+            # so retry create-function a few times before giving up.
+            for attempt in 1 2 3 4 5; do
+              if aws lambda create-function \
+                  --function-name "$FUNCTION_NAME" \
+                  --runtime python3.14 \
+                  --handler handler.lambda_handler \
+                  --role "${{ steps.role.outputs.arn }}" \
+                  --zip-file fileb://function.zip \
+                  --timeout 10 \
+                  --memory-size 128 \
+                  --publish; then
+                break
+              fi
+              echo "create-function failed (role may not have propagated yet) — retrying in 10s [$attempt/5]"
+              sleep 10
+            done
+            aws lambda wait function-active --function-name "$FUNCTION_NAME"
+          fi
 
   validate:
     name: Smoke-test the deployed function
