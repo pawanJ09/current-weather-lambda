@@ -103,7 +103,7 @@ class TestLambdaHandlerBedrockInvocation:
             "actionGroup": "CurrentWeatherActionGroup",
             "apiPath": "/current-weather",
             "httpMethod": "GET",
-            "parameters": params
+            "parameters": params,
         }
 
     @patch("src.handler.fetch_current_weather")
